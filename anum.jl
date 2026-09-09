@@ -1,3 +1,5 @@
+using Statistics
+
 function node_id_to_symbol(kind::Symbol)::Char
     if kind == :and return 'A'
     elseif kind == :or return 'O'
@@ -26,12 +28,13 @@ function symbol_to_node_kind(symbol::Char)::Symbol
     elseif symbol == 'D' return :diff
     elseif symbol == 'X' return :max
     elseif symbol == 'I' return :min
+    elseif symbol == 'C' return :call
     else return :and  # safe default
     end
 end
 
 function is_gate_symbol(symbol::Char)::Bool
-    return symbol in ['A', 'O', 'N', 'Y', 'R', 'S', 'V', 'P', 'D', 'X', 'I']
+    return symbol in ['A', 'O', 'N', 'Y', 'R', 'S', 'V', 'P', 'D', 'X', 'I', 'C']
 end
 
 function is_module_marker(symbol::Char)::Bool
@@ -39,6 +42,7 @@ function is_module_marker(symbol::Char)::Bool
 end
 
 abstract type AbstractNode end
+abstract type AbstractCircuit end
 
 # Basic nodes
 struct Sensor <: AbstractNode
@@ -54,10 +58,11 @@ struct Actuator <: AbstractNode
 end
 
 struct Gate <: AbstractNode
-  id:Int
-  kind:Symbol
+  id::Int
+  kind::Symbol 
   # :and, :or, :not, :nand, :sum, :product, :diff, :max, :min
-  inputs::Vector{Int}value::Float64
+  inputs::Vector{Int}
+  value::Float64
   name::String
 end
 
@@ -71,17 +76,31 @@ struct CallGate <: AbstractNode
   name::String
 end
 
-# Modules are defined as blueprints
-struct ModuleDef
-  id::Int
-  is_memory::Bool
-  decay::Float64 # used iff is_memory
-  genes::Vector{Union{Int, Char}}
-  # raw genome fragment filled when module first used
-  circuit::Union{Nothing, Circuit}
-  input_count::Int
-  output_node::Int
-  state:Float64 # for memory modules
+# Connections are wires
+struct Connection
+    from::Int
+    to::Int
+end
+
+Base.@kwdef mutable struct ModuleDef
+    id::Int = 0
+    is_memory::Bool = false
+    decay::Float64 = 0.0  
+    genes::Vector{Union{Int, Char}} = Union{Int, Char}[]
+    circuit::Union{Nothing, AbstractCircuit} = nothing  # Reference the abstract type
+    input_count::Int = 0
+    output_node::Int = 0
+    state::Float64 = 0.0  
+end
+
+# 3. Define Circuit as a subtype of AbstractCircuit
+Base.@kwdef mutable struct Circuit <: AbstractCircuit
+    nodes::Dict{Int, AbstractNode} = Dict{Int, AbstractNode}()
+    ordered_nodes::Vector{Int} = Int[]
+    connections::Vector{Connection} = Connection[]
+    eval_order::Vector{Int} = Int[]
+    module_defs::Dict{Int, ModuleDef} = Dict{Int, ModuleDef}()
+    main_module::Int = 0 
 end
 
 # A memory gate (K) creates a MemoryModule
@@ -93,22 +112,6 @@ struct MemoryModule <: AbstractNode
     inputs::Vector{Int}
     value::Float64
     name::String
-end
-
-# Connections are wires
-struct Connection
-    from::Int
-    to::Int
-end
-
-# A Circuit is a complete brain
-struct Circuit
-    nodes::Dict{Int, AbstractNode}
-    ordered_nodes::Vector{Int}
-    connections::Vector{Connection}
-    eval_order::Vector{Int}
-    module_defs::Dict{Int, ModuleDef}
-    main_module::Int  # module ID that runs first
 end
 
 function parse_genome(genome::Vector{Union{Int,Char}}, 
@@ -173,7 +176,7 @@ function parse_genome(genome::Vector{Union{Int,Char}},
     while i <= length(modified_genome)
         symbol = modified_genome[i]
         
-        if is_module_marker(symbol)
+        if symbol isa Char && is_module_marker(symbol)
             # Save current module
             save_module!()
             
@@ -723,4 +726,24 @@ function mutate_genome!(genome::Vector{Union{Int,Char}}, mutation_rate::Float64=
     end
     
     return genome
+end
+
+genes = random_genome()
+
+# Define some dummy sensors and actuators for the environment
+sensors = Dict{Int, Sensor}(
+    101 => Sensor(101, 0.0, "Vision"),
+    102 => Sensor(102, 0.0, "Energy")
+)
+
+actuators = Dict{Int, Actuator}(
+    201 => Actuator(201, 0.0, "MoveForward"),
+    202 => Actuator(202, 0.0, "Turn")
+)
+
+# Pass them into the parser
+brain = parse_genome(genes, sensors, actuators)
+
+for (node_id, node_data) in brain.nodes
+    println("Node $node_id: ", node_data)
 end
